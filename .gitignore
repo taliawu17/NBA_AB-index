@@ -1,0 +1,6 @@
+output/
+*.aux
+*.log
+*.tex
+__pycache__/
+
