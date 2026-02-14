@@ -13,6 +13,7 @@ Date: 2026
 """
 
 import pandas as pd
+from pathlib import Path
 import numpy as np
 import os
 from datetime import datetime
@@ -48,11 +49,13 @@ class NBAGameLogExtractor:
             data_dir: Directory containing CSV files
         """
         self.data_dir = data_dir
+        self.fallback_data_dir = Path(__file__).resolve().parents[2] / "data"
         self.player_stats = None
         self.target_players = None
         self.player_info = None
         self.extracted_logs = {}
         self.duplicate_players = []
+        self.missing_personid = []
         
     def load_data(self) -> None:
         """Load all required CSV files"""
@@ -61,24 +64,26 @@ class NBAGameLogExtractor:
         try:
             # Load player statistics (main dataset)
             logger.info("Loading PlayerStatistics.csv...")
-            self.player_stats = pd.read_csv(
-                os.path.join(self.data_dir, 'PlayerStatistics.csv'),
-                low_memory=False
-            )
+            player_stats_file = os.path.join(self.data_dir, 'PlayerStatistics.csv')
+            if not os.path.exists(player_stats_file):
+                player_stats_file = str(self.fallback_data_dir / "PlayerStatistics.csv")
+            self.player_stats = pd.read_csv(player_stats_file, low_memory=False)
             logger.info(f"Loaded {len(self.player_stats):,} player statistics records")
             
-            # Load target players list
-            logger.info("Loading target_player.csv...")
-            self.target_players = self._read_csv_with_fallback(
-                os.path.join(self.data_dir, 'target_player.csv')
-            )
+            # Load target players list with personId
+            logger.info("Loading target_player_with_personId.csv...")
+            target_file = os.path.join(self.data_dir, 'target_player_with_personId.csv')
+            if not os.path.exists(target_file):
+                target_file = str(self.fallback_data_dir / "target_player_with_personId.csv")
+            self.target_players = self._read_csv_with_fallback(target_file)
             logger.info(f"Loaded {len(self.target_players)} target players")
             
             # Load player information for uniqueness handling
             logger.info("Loading Players.csv...")
-            self.player_info = pd.read_csv(
-                os.path.join(self.data_dir, 'Players.csv')
-            )
+            players_file = os.path.join(self.data_dir, 'Players.csv')
+            if not os.path.exists(players_file):
+                players_file = str(self.fallback_data_dir / "Players.csv")
+            self.player_info = pd.read_csv(players_file)
             logger.info(f"Loaded {len(self.player_info)} player records")
             
             # Convert gameDate to datetime
@@ -108,7 +113,7 @@ class NBAGameLogExtractor:
         logger.info("Handling player uniqueness...")
         
         # Create a mapping from target players to personIds
-        player_name_mapping = {}
+        player_name_mapping: Dict[str, List[int]] = {}
         
         for _, target_player in self.target_players.iterrows():
             player_name = target_player.get('Player Name')
@@ -116,39 +121,22 @@ class NBAGameLogExtractor:
             person_id = target_player.get('personId')
 
             if pd.notna(person_id):
-                player_name_mapping[clean_name] = [int(person_id)]
-                continue
-            
-            # Find matching players in the main dataset using clean name
-            # Try exact match first, then fuzzy matching
-            exact_matches = self.player_stats[
-                (self.player_stats['firstName'] + ' ' + self.player_stats['lastName'] == clean_name)
-            ]['personId'].unique()
-            
-            if len(exact_matches) > 0:
-                player_name_mapping[clean_name] = list(exact_matches)
-                logger.info(f"Found {len(exact_matches)} exact matches for {clean_name}")
-            else:
-                # Try partial matching (remove asterisks and other special characters)
-                clean_player_name = clean_name.replace('*', '').strip()
-                first_name = clean_player_name.split()[0]
-                last_name = ' '.join(clean_player_name.split()[1:])
-                
-                # More precise matching: exact first name match, last name contains
-                partial_matches = self.player_stats[
-                    (self.player_stats['firstName'].str.lower() == first_name.lower()) &
-                    (self.player_stats['lastName'].str.contains(last_name, case=False, na=False))
-                ]['personId'].unique()
-                
-                if len(partial_matches) > 0:
-                    player_name_mapping[clean_name] = list(partial_matches)
-                    logger.info(f"Found {len(partial_matches)} partial matches for {clean_name}")
-                else:
-                    try:
-                        logger.warning(f"No matches found for {clean_name}")
-                    except UnicodeEncodeError:
-                        logger.warning(f"No matches found for player (Unicode name)")
+                if clean_name not in player_name_mapping:
                     player_name_mapping[clean_name] = []
+                pid = int(person_id)
+                if pid not in player_name_mapping[clean_name]:
+                    player_name_mapping[clean_name].append(pid)
+                continue
+
+            try:
+                logger.warning(f"Missing personId for {clean_name}; skipping player.")
+            except UnicodeEncodeError:
+                logger.warning("Missing personId for player (Unicode name); skipping player.")
+            self.missing_personid.append(
+                {"clean_name": clean_name, "player_name": player_name}
+            )
+            if clean_name not in player_name_mapping:
+                player_name_mapping[clean_name] = []
         
         # Log summary
         total_matches = sum(len(person_ids) for person_ids in player_name_mapping.values())
@@ -192,8 +180,9 @@ class NBAGameLogExtractor:
         
         player_mapping = self.handle_player_uniqueness()
         
-        # Track duplicate players
+        # Track duplicate players and missing personId entries
         self.duplicate_players = []
+        self.missing_personid = []
         
         for clean_name, person_ids in player_mapping.items():
             logger.info(f"Processing {clean_name} ({len(person_ids)} personIds)")
@@ -253,6 +242,17 @@ class NBAGameLogExtractor:
                 f.write("-" * 30 + "\n")
         
         logger.info(f"Saved duplicate player information to {duplicate_file}")
+
+    def save_missing_personid(self, output_dir: str = "output") -> None:
+        """Save missing personId players to a CSV report"""
+        if not self.missing_personid:
+            logger.info("No missing personId entries to report.")
+            return
+
+        os.makedirs(output_dir, exist_ok=True)
+        missing_file = os.path.join(output_dir, "missing_personid_players.csv")
+        pd.DataFrame(self.missing_personid).to_csv(missing_file, index=False)
+        logger.info(f"Saved missing personId report to {missing_file}")
     
     def save_game_logs(self, output_dir: str = "output") -> None:
         """Save extracted game logs to various formats"""
@@ -378,6 +378,9 @@ def main():
         
         # Save duplicate player information
         extractor.save_duplicate_players("output")
+
+        # Save missing personId report
+        extractor.save_missing_personid("output")
         
         # Generate summary report
         extractor.generate_summary_report()

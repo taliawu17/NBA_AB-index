@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "output"
+FALLBACK_OUTPUT_DIR = BASE_DIR.parent / "output"
 def compute_index_from_pairs(pairs: List[Tuple[int, int]]) -> Union[int, str]:
     """
     Given a list of (age_years, points) pairs for one individual,
@@ -83,6 +84,7 @@ class NBAPlayerIndexCalculator:
         self.data_dir = data_dir
         self.game_logs = None
         self.player_indices = None
+        self.output_dir = OUTPUT_DIR
         
     def load_prepared_data(self):
         """Load the prepared regular season data"""
@@ -90,16 +92,19 @@ class NBAPlayerIndexCalculator:
         
         try:
             # Load the prepared regular season data
-            data_file = OUTPUT_DIR / "top2_games_per_season_with_birthdate - Copy.csv"
+            data_file = OUTPUT_DIR / "player1_key_game_logs - Copy.csv"
+            if not os.path.exists(data_file):
+                data_file = FALLBACK_OUTPUT_DIR / "player1_key_game_logs - Copy.csv"
             if not os.path.exists(data_file):
                 raise FileNotFoundError(f"Prepared data file not found: {data_file}")
             
             self.game_logs = pd.read_csv(data_file)
+            self.output_dir = data_file.parent
             logger.info(f"Loaded {len(self.game_logs):,} regular season records")
-            logger.info(f"Unique players: {self.game_logs['player_name'].nunique():,}")
+            logger.info(f"Unique players: {self.game_logs['clean_name'].nunique():,}")
             
             # Check required columns
-            required_cols = ['player_name', 'age_years', 'points']
+            required_cols = ['clean_name', 'age_years', 'points']
             missing_cols = [col for col in required_cols if col not in self.game_logs.columns]
             if missing_cols:
                 raise ValueError(f"Missing required columns: {missing_cols}")
@@ -129,8 +134,12 @@ class NBAPlayerIndexCalculator:
         
         # Calculate index for each player
         def index_for_group(g: pd.DataFrame) -> Union[int, str]:
-            # Sort by age_years (highest to lowest)
-            g_sorted = g.sort_values('age_years', ascending=False, kind="mergesort")
+            # Sort by age_years (highest to lowest), then points, then gameDate
+            g_sorted = g.sort_values(
+                ['age_years', 'points', 'gameDate'],
+                ascending=[False, False, False],
+                kind="mergesort"
+            )
             
             # For each age (from highest to lowest), check if the highest score
             # among ALL ages from highest down to current age >= current age
@@ -149,7 +158,7 @@ class NBAPlayerIndexCalculator:
             return "NA"
         
         self.player_indices = (
-            valid_data.groupby('player_name', sort=False)
+            valid_data.groupby('clean_name', sort=False)
             .apply(index_for_group)
             .reset_index(name="index")
         )
@@ -157,13 +166,17 @@ class NBAPlayerIndexCalculator:
         # Add detailed information for each player's index calculation
         detailed_info = []
         
-        for player_name in self.player_indices['player_name']:
-            player_data = valid_data[valid_data['player_name'] == player_name].copy()
-            player_index = self.player_indices[self.player_indices['player_name'] == player_name]['index'].iloc[0]
+        for player_name in self.player_indices['clean_name']:
+            player_data = valid_data[valid_data['clean_name'] == player_name].copy()
+            player_index = self.player_indices[self.player_indices['clean_name'] == player_name]['index'].iloc[0]
             
             if player_index != "NA":
                 # Find the specific record that determined the index
-                player_data_sorted = player_data.sort_values('age_years', ascending=False)
+                player_data_sorted = player_data.sort_values(
+                    ['age_years', 'points', 'gameDate'],
+                    ascending=[False, False, False],
+                    kind="mergesort"
+                )
                 
                 for i, (_, row) in enumerate(player_data_sorted.iterrows()):
                     current_age = int(row['age_years'])
@@ -178,6 +191,7 @@ class NBAPlayerIndexCalculator:
                         
                         detailed_info.append({
                             'player_name': player_name,
+                            'personId': int(max_game['personId']) if pd.notna(max_game.get('personId')) else None,
                             'index': player_index,
                             'age_years': int(max_game['age_years']),
                             'age_days': int(max_game['age_days']) if pd.notna(max_game.get('age_days')) else None,
@@ -190,15 +204,18 @@ class NBAPlayerIndexCalculator:
                         break
             else:
                 # For NA cases, add basic info
-                player_stats = player_data.groupby('player_name').agg({
+                player_stats = player_data.groupby('clean_name').agg({
                     'age_years': ['min', 'max'],
                     'points': ['max'],
                     'year': ['min', 'max'],
                     'birth_date': 'first'
                 }).round(2)
+                person_ids = player_data["personId"].dropna().unique()
+                person_id_value = int(person_ids[0]) if len(person_ids) == 1 else None
                 
                 detailed_info.append({
                     'player_name': player_name,
+                    'personId': person_id_value,
                     'index': "NA",
                     'age_years': None,
                     'age_days': None,
@@ -224,7 +241,7 @@ class NBAPlayerIndexCalculator:
         if len(valid_indices) > 0:
             logger.info(f"Index statistics: Min={valid_indices['index'].min():.0f}, Max={valid_indices['index'].max():.0f}, Mean={valid_indices['index'].mean():.1f}")
     
-    def save_results(self, output_dir: str = str(OUTPUT_DIR)):
+    def save_results(self, output_dir: str = None):
         """Save the calculated indices to files"""
         logger.info("Saving index calculation results...")
         
@@ -232,63 +249,16 @@ class NBAPlayerIndexCalculator:
             raise ValueError("No indices calculated. Call calculate_player_indices() first.")
         
         # Create output directory
+        if output_dir is None:
+            output_dir = str(self.output_dir)
         os.makedirs(output_dir, exist_ok=True)
         
         # Save main results
-        indices_file = os.path.join(output_dir, 'player_indices_20260204.csv')
+        indices_file = os.path.join(output_dir, 'player1_index.csv')
         self.player_indices.to_csv(indices_file, index=False)
         logger.info(f"Saved player indices to {indices_file}")
         
-        # Save sorted by index (descending)
-        sorted_indices = self.player_indices.copy()
-        valid_indices = sorted_indices[sorted_indices['index'] != 'NA'].copy()
-        valid_indices['index'] = valid_indices['index'].astype(int)
-        valid_indices['age_days'] = pd.to_numeric(valid_indices['age_days'], errors='coerce')
-        valid_indices['pts'] = pd.to_numeric(valid_indices['pts'], errors='coerce')
-        valid_indices = valid_indices.sort_values(['index', 'pts', 'age_days'], ascending=[False, False, False])
-        
-        sorted_file = os.path.join(output_dir, 'player_indices_ranked_20260204.csv')
-        valid_indices.to_csv(sorted_file, index=False)
-        logger.info(f"Saved ranked player indices to {sorted_file}")
-        
-        # Save as Excel with multiple sheets
-        excel_file = os.path.join(output_dir, 'player_indices.xlsx')
-        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
-            self.player_indices.to_excel(writer, sheet_name='All Players', index=False)
-            valid_indices.to_excel(writer, sheet_name='Ranked Players', index=False)
-            
-            # Add summary statistics
-            summary_data = {
-                'Metric': [
-                    'Total Players',
-                    'Players with Valid Index',
-                    'Players with NA Index',
-                    'Index Range',
-                    'Average Index',
-                    'Highest Index',
-                    'Lowest Index'
-                ],
-                'Value': [
-                    len(self.player_indices),
-                    len(valid_indices),
-                    len(self.player_indices) - len(valid_indices),
-                    f"{int(valid_indices['index'].min())}-{int(valid_indices['index'].max())}" if len(valid_indices) > 0 else "N/A",
-                    f"{valid_indices['index'].mean():.1f}" if len(valid_indices) > 0 else "N/A",
-                    f"{int(valid_indices['index'].max())}" if len(valid_indices) > 0 else "N/A",
-                    f"{int(valid_indices['index'].min())}" if len(valid_indices) > 0 else "N/A"
-                ]
-            }
-            summary_df = pd.DataFrame(summary_data)
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-        
-        logger.info(f"Saved Excel file to {excel_file}")
-        
-        # Save as Parquet (convert NA to NaN for compatibility)
-        parquet_file = os.path.join(output_dir, 'player_indices.parquet')
-        parquet_data = self.player_indices.copy()
-        parquet_data['index'] = pd.to_numeric(parquet_data['index'], errors='coerce')
-        parquet_data.to_parquet(parquet_file, index=False)
-        logger.info(f"Saved Parquet file to {parquet_file}")
+        # Only CSV output is saved for this script.
     
     def generate_summary_report(self):
         """Generate a summary report of the index calculation"""
