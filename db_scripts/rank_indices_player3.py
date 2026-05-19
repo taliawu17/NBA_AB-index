@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Rank batch-1 AB-index results (valid indices only).
+Rank batch-3 AB-index results (valid indices only).
 
-Tie-break (paper): sort by index, pts, age_years, age_days (all descending).
+Input:  output/player3_index.csv  (from calculate_indices_player3.py)
+Output: output/player3_index_ranked.csv
 
-Input:  output/player1_index.csv  (from calculate_indices_player1.py)
-Output: output/player1_index_ranked.csv
-
-Run after: python db_scripts/calculate_indices_player1.py
+Run order: 6) after calculate_indices_player3.py.
+Tie-break: index, pts, age_years, age_days (all descending), matching paper wording.
 """
 
 from pathlib import Path
@@ -16,12 +15,11 @@ import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "output"
-INPUT_FILE = OUTPUT_DIR / "player1_index.csv"
-OUTPUT_FILE = OUTPUT_DIR / "player1_index_ranked.csv"
+INPUT_FILE = OUTPUT_DIR / "player3_index.csv"
+OUTPUT_FILE = OUTPUT_DIR / "player3_index_ranked.csv"
 
 
 def _save_ranked_csv(df: pd.DataFrame, out: Path) -> Path:
-    """Write ranked CSV; on PermissionError write *_new.csv next to it."""
     try:
         df.to_csv(out, index=False)
         return out
@@ -37,9 +35,7 @@ def _save_ranked_csv(df: pd.DataFrame, out: Path) -> Path:
 
 def main() -> None:
     if not INPUT_FILE.exists():
-        raise FileNotFoundError(
-            f"Missing {INPUT_FILE}. Run calculate_indices_player1.py first."
-        )
+        raise FileNotFoundError(f"Missing {INPUT_FILE}. Run calculate_indices_player3.py first.")
 
     df = pd.read_csv(INPUT_FILE, low_memory=False)
     idx_num = pd.to_numeric(df["index"], errors="coerce")
