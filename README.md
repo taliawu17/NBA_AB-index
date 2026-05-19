@@ -30,9 +30,9 @@ Index rule: \(k = \max \min(\text{age\_years}, \text{points})\) over top games; 
 
 | Step | Batch 1 | Batch 2 | Batch 3 |
 |------|---------|---------|---------|
-| personId | `db_scripts/add_personid_target_player1.py` | `db_scripts/store/add_personid_target_player2.py` | (in `target_player3_with_personId.csv`) |
-| extract logs | `db_scripts/extract_game_logs_player1.py` | `db_scripts/extract_game_logs_player2.py` | `db_scripts/store/build_target_player3.py` (if needed) |
-| | | | `db_scripts/store/extract_game_logs_target3.py` |
+| personId | `db_scripts/add_personid_target_player1.py` | `db_scripts/add_personid_target_player2.py` | (in `target_player3_with_personId.csv`) |
+| extract logs | `db_scripts/extract_game_logs_player1.py` | `db_scripts/extract_game_logs_player2.py` | `db_scripts/build_target_player3.py` (if needed) |
+| | | | `db_scripts/extract_game_logs_target3.py` |
 | key logs | `db_scripts/ExtractKeyInfo_player1.py` | `db_scripts/ExtractKeyInfo_player2.py` | build `player3_key_game_logs.csv` manually or from logs; then Excel ages |
 
 **Extract outputs (`output/`):**
@@ -57,7 +57,7 @@ Input: `top_games_per_season_playerN.csv` → output `playerN_index.csv`.
 Override: env `CALCULATE_INDICES_PLAYER1_INPUT` / `..._PLAYER2_...` / `..._PLAYER3_...`.
 
 **Step 6 — rank:**  
-- Batch 1 & 3: `db_scripts/rank_indices_player1.py`, `db_scripts/store/rank_indices_player3.py`  
+- Batch 1 & 3: `db_scripts/rank_indices_player1.py`, `db_scripts/rank_indices_player3.py`  
 - Batch 2: `calculate_indices_player2.py` also writes `player2_index_ranked.csv`; optional re-run with `db_scripts/rank_indices_player2.py`
 
 ```bash
@@ -71,7 +71,7 @@ python db_scripts/rank_indices_player2.py
 
 python db_scripts/select_top_games_per_season_player3.py
 python db_scripts/calculate_indices_player3.py
-python db_scripts/store/rank_indices_player3.py
+python db_scripts/rank_indices_player3.py
 ```
 
 **Step 7 — combine** (reads `player1_index.csv`, `player2_index.csv`, `player3_index.csv`, not the per-batch ranked files):
