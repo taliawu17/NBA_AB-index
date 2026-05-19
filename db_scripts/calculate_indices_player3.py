@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-NBA Player AB-Index Calculation Script (player2)
+NBA Player AB-Index calculation for target_player3 cohort (batch 3).
 
-Reads top games (default: output/top_games_per_season_player2.csv).
-Optional override: env CALCULATE_INDICES_PLAYER2_INPUT.
+Reads top games (default: output/top_games_per_season_player3.csv).
+Optional override: set env CALCULATE_INDICES_PLAYER3_INPUT to another CSV path.
 
 Outputs:
-- output/player2_index.csv
-- output/player2_index_ranked.csv  (valid indices only, ranked)
+- output/player3_index.csv
+
+Then run: python db_scripts/rank_indices_player3.py  -> output/player3_index_ranked.csv
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("index_calculation_player2.log"),
+        logging.FileHandler("index_calculation_player3.log"),
         logging.StreamHandler(),
     ],
 )
@@ -39,28 +40,19 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "output"
-DEFAULT_INPUT_FILE = OUTPUT_DIR / "top_games_per_season_player2.csv"
-INDEX_OUTPUT_FILE = OUTPUT_DIR / "player2_index.csv"
-RANKED_OUTPUT_FILE = OUTPUT_DIR / "player2_index_ranked.csv"
+DEFAULT_INPUT_FILE = OUTPUT_DIR / "top_games_per_season_player3.csv"
 
 
 class NBAPlayerIndexCalculator:
-    """Class for calculating NBA player indices"""
+    """AB-index calculator for batch 3 (same rule as player2; k < 18 -> NA)."""
 
-    def __init__(self, data_dir: str = "."):
-        """
-        Initialize the calculator
-
-        Args:
-            data_dir: Directory containing the data files
-        """
-        self.data_dir = data_dir
-        self.game_logs = None
-        self.player_indices = None
+    def __init__(self) -> None:
+        self.game_logs: pd.DataFrame | None = None
+        self.player_indices: pd.DataFrame | None = None
 
     def load_prepared_data(self) -> None:
         data_path = Path(
-            os.environ.get("CALCULATE_INDICES_PLAYER2_INPUT", str(DEFAULT_INPUT_FILE))
+            os.environ.get("CALCULATE_INDICES_PLAYER3_INPUT", str(DEFAULT_INPUT_FILE))
         )
         if not data_path.is_file():
             raise FileNotFoundError(f"Top games file not found: {data_path}")
@@ -73,17 +65,14 @@ class NBAPlayerIndexCalculator:
             f"{len(self.game_logs):,}",
             data_path.name,
         )
-        logger.info("Unique players: %s", f"{self.game_logs['player_name'].nunique():,}")
+        logger.info("Unique players: %s", self.game_logs["player_name"].nunique())
 
         required_cols = ["player_name", "age_years", "points"]
         missing_cols = [c for c in required_cols if c not in self.game_logs.columns]
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
 
-    def calculate_player_indices(self):
-        """Calculate the index for each player"""
-        logger.info("Calculating player indices...")
-
+    def calculate_player_indices(self) -> None:
         if self.game_logs is None:
             raise ValueError("Data not loaded. Call load_prepared_data() first.")
 
@@ -93,22 +82,22 @@ class NBAPlayerIndexCalculator:
             & (self.game_logs["age_years"] >= 18)
         ].copy()
 
-        logger.info(f"Using {len(valid_data):,} records with valid age and points data")
+        logger.info("Using %s records with valid age and points data", f"{len(valid_data):,}")
 
         def index_for_group(g: pd.DataFrame) -> Union[int, str]:
             return compute_ab_index_threshold(g, "age_years", "points")
 
-        self.player_indices = (
+        index_by_player = (
             valid_data.groupby("player_name", sort=False)
             .apply(index_for_group)
             .reset_index(name="index")
         )
 
-        detailed_info = []
+        detailed_info: list[dict] = []
 
-        for player_name in self.player_indices["player_name"]:
+        for player_name in index_by_player["player_name"]:
             player_data = valid_data[valid_data["player_name"] == player_name].copy()
-            player_index = self.player_indices[self.player_indices["player_name"] == player_name][
+            player_index = index_by_player[index_by_player["player_name"] == player_name][
                 "index"
             ].iloc[0]
 
@@ -144,7 +133,7 @@ class NBAPlayerIndexCalculator:
                         "year": ["min", "max"],
                         "birth_date": "first",
                     }
-                ).round(2)
+                )
 
                 detailed_info.append(
                     {
@@ -162,52 +151,20 @@ class NBAPlayerIndexCalculator:
                 )
 
         self.player_indices = pd.DataFrame(detailed_info)
-
-        logger.info(f"Calculated indices for {len(self.player_indices):,} players")
-
-        valid_indices = self.player_indices[self.player_indices["index"] != "NA"]
-        na_indices = self.player_indices[self.player_indices["index"] == "NA"]
-
-        logger.info(f"Players with valid index: {len(valid_indices):,}")
-        logger.info(f"Players with NA index: {len(na_indices):,}")
-
-        if len(valid_indices) > 0:
-            logger.info(
-                f"Index statistics: Min={valid_indices['index'].min():.0f}, "
-                f"Max={valid_indices['index'].max():.0f}, Mean={valid_indices['index'].mean():.1f}"
-            )
+        logger.info("Calculated indices for %s players", len(self.player_indices))
 
     def save_results(self) -> None:
-        """Save player2_index.csv and player2_index_ranked.csv (same naming as batch 1)."""
-        logger.info("Saving index calculation results...")
-
         if self.player_indices is None:
-            raise ValueError("No indices calculated. Call calculate_player_indices() first.")
+            raise ValueError("No indices calculated.")
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_path = OUTPUT_DIR / "player3_index.csv"
+        self.player_indices.to_csv(out_path, index=False)
+        logger.info("Saved player indices to %s", out_path)
 
-        self.player_indices.to_csv(INDEX_OUTPUT_FILE, index=False)
-        logger.info("Saved player indices to %s", INDEX_OUTPUT_FILE)
-
-        valid_indices = self.player_indices[self.player_indices["index"] != "NA"].copy()
-        valid_indices["index"] = valid_indices["index"].astype(int)
-        valid_indices["age_years"] = pd.to_numeric(valid_indices["age_years"], errors="coerce")
-        valid_indices["age_days"] = pd.to_numeric(valid_indices["age_days"], errors="coerce")
-        valid_indices["pts"] = pd.to_numeric(valid_indices["pts"], errors="coerce")
-        valid_indices = valid_indices.sort_values(
-            ["index", "pts", "age_years", "age_days"],
-            ascending=[False, False, False, False],
-        )
-
-        valid_indices.to_csv(RANKED_OUTPUT_FILE, index=False)
-        logger.info("Saved ranked player indices to %s", RANKED_OUTPUT_FILE)
-
-    def generate_summary_report(self):
-        """Generate a summary report of the index calculation"""
-        logger.info("Generating summary report...")
-
+    def generate_summary_report(self) -> None:
         print("\n" + "=" * 80)
-        print("NBA PLAYER INDEX CALCULATION - SUMMARY REPORT")
+        print("NBA PLAYER INDEX CALCULATION (BATCH 3) - SUMMARY")
         print("=" * 80)
 
         if self.player_indices is None:
@@ -215,59 +172,42 @@ class NBAPlayerIndexCalculator:
             return
 
         valid_indices = self.player_indices[self.player_indices["index"] != "NA"].copy()
-        valid_indices["index"] = valid_indices["index"].astype(int)
+        if len(valid_indices) > 0:
+            valid_indices["index"] = valid_indices["index"].astype(int)
 
-        print(f"\nIndex Calculation Results:")
-        print("-" * 40)
-        print(f"Total Players: {len(self.player_indices):,}")
-        print(f"Players with Valid Index: {len(valid_indices):,}")
-        print(f"Players with NA Index: {len(self.player_indices) - len(valid_indices):,}")
+        print(f"\nTotal players: {len(self.player_indices):,}")
+        print(f"Valid index: {len(valid_indices):,}")
+        print(f"NA index: {len(self.player_indices) - len(valid_indices):,}")
 
         if len(valid_indices) > 0:
-            print(f"\nIndex Statistics:")
-            print("-" * 20)
-            print(f"Range: {valid_indices['index'].min()}-{valid_indices['index'].max()}")
-            print(f"Average: {valid_indices['index'].mean():.1f}")
-            print(f"Median: {valid_indices['index'].median():.1f}")
-
-            print(f"\nTop 20 Players by Index:")
-            print("-" * 50)
+            print(f"\nIndex range: {valid_indices['index'].min()}-{valid_indices['index'].max()}")
             top_players = valid_indices.sort_values(
                 ["index", "pts", "age_years", "age_days"],
                 ascending=[False, False, False, False],
             ).head(20)
+            print("\nTop players by index:")
             for i, (_, player) in enumerate(top_players.iterrows(), 1):
                 print(
-                    f"{i:2d}. {player['player_name']:<25} "
-                    f"Index: {player['index']:2.0f} "
+                    f"{i:2d}. {player['player_name']:<25} Index: {int(player['index']):2d} "
                     f"(Age: {player['age_years']:.0f}, Pts: {player['pts']:.0f})"
                 )
 
         print("\n" + "=" * 80)
 
 
-def main():
-    """Main execution function"""
+def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-    logger.info("Starting NBA Player Index Calculation...")
-
-    calculator = NBAPlayerIndexCalculator()
-
-    try:
-        calculator.load_prepared_data()
-        calculator.calculate_player_indices()
-        calculator.save_results()
-        calculator.generate_summary_report()
-        logger.info("Index calculation completed successfully!")
-        logger.info("Next (optional re-rank): python db_scripts/rank_indices_player2.py")
-
-    except Exception as e:
-        logger.error(f"Index calculation failed: {e}")
-        raise
+    logger.info("Starting NBA Player Index calculation (batch 3)...")
+    calc = NBAPlayerIndexCalculator()
+    calc.load_prepared_data()
+    calc.calculate_player_indices()
+    calc.save_results()
+    calc.generate_summary_report()
+    logger.info("Done. Next: python db_scripts/rank_indices_player3.py")
 
 
 if __name__ == "__main__":

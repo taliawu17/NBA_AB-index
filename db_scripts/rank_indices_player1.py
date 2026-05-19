@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Rank player1_index.csv by:
-index desc, pts desc, age_years desc, age_days desc.
+Rank batch-1 AB-index results (valid indices only).
+
+Tie-break (paper): sort by index, pts, age_years, age_days (all descending).
+
+Input:  output/player1_index.csv  (from calculate_indices_player1.py)
+Output: output/player1_index_ranked.csv
+
+Run after: python db_scripts/calculate_indices_player1.py
 """
 
 from pathlib import Path
 
 import pandas as pd
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "output"
@@ -15,30 +20,56 @@ INPUT_FILE = OUTPUT_DIR / "player1_index.csv"
 OUTPUT_FILE = OUTPUT_DIR / "player1_index_ranked.csv"
 
 
+def _save_ranked_csv(df: pd.DataFrame, out: Path) -> Path:
+    """Write ranked CSV; on PermissionError write *_new.csv next to it."""
+    try:
+        df.to_csv(out, index=False)
+        return out
+    except PermissionError:
+        alt = out.parent / f"{out.stem}_new{out.suffix}"
+        df.to_csv(alt, index=False)
+        print(
+            f"Permission denied for {out} (file may be open elsewhere). "
+            f"Wrote: {alt}"
+        )
+        return alt
+
+
 def main() -> None:
     if not INPUT_FILE.exists():
-        raise FileNotFoundError(f"Missing {INPUT_FILE}")
+        raise FileNotFoundError(
+            f"Missing {INPUT_FILE}. Run calculate_indices_player1.py first."
+        )
 
-    df = pd.read_csv(INPUT_FILE)
-    if "index" not in df.columns:
-        raise ValueError("Missing index column in player1_index.csv")
+    df = pd.read_csv(INPUT_FILE, low_memory=False)
+    idx_num = pd.to_numeric(df["index"], errors="coerce")
+    valid = df.loc[idx_num.notna()].copy()
+    if valid.empty:
+        print("No valid (non-NA) indices to rank; writing empty ranked file.")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        path = _save_ranked_csv(valid, OUTPUT_FILE)
+        print(f"Saved: {path} ({len(valid)} rows)")
+        return
 
-    ranked = df.copy()
-    ranked = ranked[ranked["index"] != "NA"].copy()
-    ranked["index"] = pd.to_numeric(ranked["index"], errors="coerce")
-    ranked["pts"] = pd.to_numeric(ranked.get("pts"), errors="coerce")
-    ranked["age_years"] = pd.to_numeric(ranked.get("age_years"), errors="coerce")
-    ranked["age_days"] = pd.to_numeric(ranked.get("age_days"), errors="coerce")
-
-    ranked = ranked.sort_values(
+    valid["index"] = idx_num.loc[valid.index].astype(int)
+    valid = valid.loc[valid["index"] >= 18].copy()
+    if valid.empty:
+        print("No indices >= 18 to rank; writing empty ranked file.")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        path = _save_ranked_csv(valid, OUTPUT_FILE)
+        print(f"Saved: {path} ({len(valid)} rows)")
+        return
+    valid["age_years"] = pd.to_numeric(valid["age_years"], errors="coerce")
+    valid["age_days"] = pd.to_numeric(valid["age_days"], errors="coerce")
+    valid["pts"] = pd.to_numeric(valid["pts"], errors="coerce")
+    ranked = valid.sort_values(
         ["index", "pts", "age_years", "age_days"],
         ascending=[False, False, False, False],
-        kind="mergesort",
     )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    ranked.to_csv(OUTPUT_FILE, index=False)
-    print(f"Saved ranked file: {OUTPUT_FILE}")
+    path = _save_ranked_csv(ranked, OUTPUT_FILE)
+    print(f"Saved: {path} ({len(ranked)} rows)")
 
 
 if __name__ == "__main__":
