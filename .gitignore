@@ -1,6 +1,39 @@
+# Pipeline outputs (see README)
 output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# LaTeX
 *.aux
 *.log
 *.tex
-__pycache__/
 
+# Editors / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Office temp files
+~$*
+
+# Local-only project folders (not part of the published pipeline)
+HistoricalManuscript/
+Endnote/
+JSA/
