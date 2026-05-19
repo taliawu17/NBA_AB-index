@@ -80,7 +80,7 @@ python db_scripts/rank_indices_player3.py
 python db_scripts/combine_player_indices.py
 ```
 
-Optional follow-ups:
+Optional follow-ups (local only; not in the GitHub repo):
 
 ```bash
 python db_scripts/add_before_after_2014.py      # adds BeforeAfter2014 to player_index_ranked_all.csv
