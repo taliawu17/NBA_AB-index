@@ -123,3 +123,7 @@ Legacy copies of older scripts live under `db_scripts/store/`.
 - Remove non-player rows from key logs (e.g. coaching appearances) before step 4.
 - `clean_name` in top games is mapped to `player_name` in index scripts.
 - See `requirements.txt` (Python 3.10+).
+
+## Preprint
+The AgeBreaker Index: Age-Defying Single-Game Scoring Among Veteran NBA Players
+DOI: https://doi.org/10.51224/SportRxiv.926
